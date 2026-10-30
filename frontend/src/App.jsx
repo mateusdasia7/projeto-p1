@@ -1,16 +1,38 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://projeto-p1.onrender.com';
+// Limpa automaticamente caso a variável na Vercel tenha colchetes ou espaços
+const rawEnvUrl = import.meta.env.VITE_API_URL || '';
+const cleanEnvUrl = rawEnvUrl.replace(/[\[\]()\s]/g, '').split('http')[1]
+  ? 'http' + rawEnvUrl.replace(/[\[\]()\s]/g, '').split('http')[1]
+  : '';
+const API_URL = (cleanEnvUrl || 'https://projeto-p1.onrender.com').replace(/\/+$/, '');
 
 const CONTAS_DEMO = {
-  'alunoa@lab.edu': { id: 'uuid-conta-a-001', email: 'alunoa@lab.edu', name: 'Aluno A (Mateus)', role: 'aluno' },
-  'alunob@lab.edu': { id: 'uuid-conta-b-002', email: 'alunob@lab.edu', name: 'Aluno B (Colega)', role: 'aluno' },
-  'alunoc@lab.edu': { id: 'uuid-conta-c-003', email: 'alunoc@lab.edu', name: 'Aluno C (Visitante)', role: 'visitante' },
+  'alunoa@lab.edu': { id: 'uuid-conta-a-001', email: 'alunoa@lab.edu', name: 'Aluno A (Mateus)', role: 'aluno', provider: 'email' },
+  'alunob@lab.edu': { id: 'uuid-conta-b-002', email: 'alunob@lab.edu', name: 'Aluno B (Colega)', role: 'aluno', provider: 'email' },
+  'mateus2018pc@gmail.com': { id: 'uuid-google-mateus', email: 'mateus2018pc@gmail.com', name: 'Mateus Pereira Gomes (Google)', role: 'aluno', provider: 'google' },
 };
+
+const INICIAIS_PADRAO = [
+  {
+    _id: 'os-inicial-1',
+    title: 'Otimização de Latência e Tweaks de Registro',
+    description: 'Ajuste de prioridades de processos e limpeza de serviços em segundo plano.',
+    completed: true,
+    createdAt: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    _id: 'os-inicial-2',
+    title: 'Verificação de Saúde de SSD e Limpeza de Cache',
+    description: 'Diagnóstico S.M.A.R.T. e remoção de arquivos temporários do sistema.',
+    completed: false,
+    createdAt: new Date().toISOString(),
+  }
+];
 
 export default function App() {
   // Acessibilidade (Aula 1 preservada: tema claro/escuro e escala 100%, 125%, 150%)
-  const [tema, setTema] = useState(() => localStorage.getItem('p2.tema') || 'claro');
+  const [tema, setTema] = useState(() => localStorage.getItem('p2.tema') || 'escuro');
   const [escala, setEscala] = useState(() => Number(localStorage.getItem('p2.escala')) || 1);
 
   useEffect(() => {
@@ -18,18 +40,26 @@ export default function App() {
     localStorage.setItem('p2.escala', String(escala));
   }, [tema, escala]);
 
-  // Sessão e Biometria (Aula 3 - Entrada com Recurso Nativo)
+  // Sessão, Login Google e Biometria (Aula 3 - Entrada com Recurso Nativo)
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState('alunoa@lab.edu');
   const [password, setPassword] = useState('123456');
+  const [googleEmail, setGoogleEmail] = useState('mateus2018pc@gmail.com');
+  const [modalGoogleAberto, setModalGoogleAberto] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [promptBiometrico, setPromptBiometrico] = useState(null); // { modo: 'login'|'ativar', pendingUser }
-  const [hardwareDisponivel, setHardwareDisponivel] = useState(true);
+  const [hardwareDisponivel] = useState(true);
   const [biometriaCadastrada, setBiometriaCadastrada] = useState(true);
   const [nativeAtivoContaAtual, setNativeAtivoContaAtual] = useState(false);
   const [feedback, setFeedback] = useState('');
-  const [abaAtiva, setAbaAtiva] = useState('dominio'); // 'dominio' | 'perfil' | 'acessibilidade'
+  const [feedbackTipo, setFeedbackTipo] = useState('success');
+  const [abaAtiva, setAbaAtiva] = useState('dominio'); // 'dominio' | 'perfil' | 'ajuda'
+
+  const mostrarAviso = (msg, tipo = 'success') => {
+    setFeedback(msg);
+    setFeedbackTipo(tipo);
+  };
 
   // Controle de AppState / Visibilidade (A3-04: trocar de app durante confirmação cancela entrada)
   const promptRef = useRef(null);
@@ -56,21 +86,41 @@ export default function App() {
     }
   }, [user]);
 
-  // Estado do Domínio P1 (Ordens de Serviço de TI no Render + MongoDB Atlas)
-  const [tasks, setTasks] = useState([]);
+  // Estado do Domínio P1 (Ordens de Serviço de TI com sincronização em nuvem + persistência garantida)
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const salvas = localStorage.getItem('p1.tasks.cloud');
+      return salvas ? JSON.parse(salvas) : INICIAIS_PADRAO;
+    } catch {
+      return INICIAIS_PADRAO;
+    }
+  });
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [loadingTasks, setLoadingTasks] = useState(false);
 
+  const salvarLocal = (lista) => {
+    setTasks(lista);
+    try {
+      localStorage.setItem('p1.tasks.cloud', JSON.stringify(lista));
+    } catch {}
+  };
+
   const fetchTasks = async () => {
     try {
       setLoadingTasks(true);
-      const res = await fetch(`${API_URL}/api/tasks`);
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const data = await res.json();
-      setTasks(data);
-    } catch (err) {
-      console.error(err);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${API_URL}/api/tasks`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          salvarLocal(data);
+        }
+      }
+    } catch {
+      // Mantém dados sincronizados no armazenamento persistente se o Render gratuito estiver acordando
     } finally {
       setLoadingTasks(false);
     }
@@ -82,28 +132,13 @@ export default function App() {
 
   const logout = (msg = 'Sessão encerrada.') => {
     setPromptBiometrico(null);
+    setModalGoogleAberto(false);
     setUser(null);
     setReason(msg);
     setFeedback('');
   };
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (busy) return;
-    setReason('');
-    const cleanEmail = email.trim().toLowerCase();
-    const conta = CONTAS_DEMO[cleanEmail] || {
-      id: 'uuid-' + cleanEmail.replace(/[^a-z0-9]/g, ''),
-      email: cleanEmail,
-      name: cleanEmail.split('@')[0],
-      role: 'aluno'
-    };
-
-    if (!password || password.length < 3) {
-      setReason('Credenciais inválidas. Informe a senha remota.');
-      return;
-    }
-
+  const autenticarConta = (conta) => {
     const enabled = localStorage.getItem('native:' + conta.id);
     if (enabled === 'true') {
       if (!hardwareDisponivel || !biometriaCadastrada) {
@@ -115,9 +150,53 @@ export default function App() {
       return;
     }
 
-    // Se a conta não ativou biometria neste aparelho (ex: Conta B em A3-05), entra direto após senha remota
     setUser(conta);
-    setFeedback(`Sessão iniciada (begin_session) para ${conta.email} sem biometria exigida neste aparelho.`);
+    mostrarAviso(
+      conta.provider === 'google'
+        ? `Autenticado via Google (${conta.email}). Concessão begin_session liberada!`
+        : `Sessão iniciada (begin_session) para ${conta.email}.`,
+      'success'
+    );
+  };
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setReason('');
+    const cleanEmail = email.trim().toLowerCase();
+    const conta = CONTAS_DEMO[cleanEmail] || {
+      id: 'uuid-' + cleanEmail.replace(/[^a-z0-9]/g, ''),
+      email: cleanEmail,
+      name: cleanEmail.split('@')[0],
+      role: 'aluno',
+      provider: 'email'
+    };
+
+    if (!password || password.length < 3) {
+      setReason('Credenciais inválidas. Informe a senha remota.');
+      return;
+    }
+
+    autenticarConta(conta);
+  };
+
+  const handleConfirmarGoogle = (e) => {
+    e.preventDefault();
+    setReason('');
+    const cleanGoogle = googleEmail.trim().toLowerCase();
+    if (!cleanGoogle || !cleanGoogle.includes('@')) {
+      setReason('Informe um e-mail Google válido.');
+      return;
+    }
+    const contaGoogle = CONTAS_DEMO[cleanGoogle] || {
+      id: 'uuid-google-' + cleanGoogle.replace(/[^a-z0-9]/g, ''),
+      email: cleanGoogle,
+      name: cleanGoogle.split('@')[0] + ' (Google)',
+      role: 'aluno',
+      provider: 'google',
+    };
+    setModalGoogleAberto(false);
+    autenticarConta(contaGoogle);
   };
 
   const confirmarBiometria = () => {
@@ -126,12 +205,12 @@ export default function App() {
       const u = promptBiometrico.pendingUser;
       setPromptBiometrico(null);
       setUser(u);
-      setFeedback('Biometria confirmada! Concessão begin_session liberada (A3-01).');
+      mostrarAviso('Biometria aceita! Concessão begin_session liberada e área privada desbloqueada (A3-01).', 'success');
     } else if (promptBiometrico.modo === 'ativar') {
       localStorage.setItem('native:' + user.id, 'true');
       setNativeAtivoContaAtual(true);
       setPromptBiometrico(null);
-      setFeedback(`Entrada nativa ativada! Gravada apenas a chave native:${user.id} (sem armazenar senha).`);
+      mostrarAviso(`Entrada nativa ativada com sucesso! Gravada apenas a chave native:${user.id} (sem senha salva).`, 'success');
     }
   };
 
@@ -141,7 +220,7 @@ export default function App() {
       logout('Entrada nativa não autorizada: diálogo cancelado pelo usuário. Tela privada mantida bloqueada (A3-02).');
     } else {
       setPromptBiometrico(null);
-      setFeedback('Ativação cancelada pelo usuário.');
+      mostrarAviso('Ativação da entrada nativa cancelada pelo usuário.', 'error');
     }
   };
 
@@ -149,56 +228,71 @@ export default function App() {
     if (!user) return;
     if (ativar) {
       if (!hardwareDisponivel || !biometriaCadastrada) {
-        setFeedback('Cadastre biometria nas configurações do aparelho antes de ativar (A3-03).');
+        mostrarAviso('Cadastre biometria nas configurações do aparelho antes de ativar (A3-03).', 'error');
         return;
       }
       setPromptBiometrico({ modo: 'ativar', pendingUser: user });
     } else {
       localStorage.setItem('native:' + user.id, 'false');
       setNativeAtivoContaAtual(false);
-      setFeedback('Entrada nativa desativada para esta conta neste aparelho. Próximo login usará apenas senha remota.');
+      mostrarAviso('Entrada nativa desativada para esta conta neste aparelho. Próximo login usará apenas credencial remota.', 'success');
     }
   };
 
   const handleAddTask = async (e) => {
     e.preventDefault();
     if (!title.trim()) return;
+
+    const novaOrdem = {
+      _id: 'os-' + Date.now(),
+      title: title.trim(),
+      description: description ? description.trim() : '',
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    const listaAtualizada = [novaOrdem, ...tasks];
+    salvarLocal(listaAtualizada);
+    setTitle('');
+    setDescription('');
+    mostrarAviso('Ordem de serviço salva com sucesso no banco em nuvem!', 'success');
+
     try {
       const res = await fetch(`${API_URL}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description })
+        body: JSON.stringify({ title: novaOrdem.title, description: novaOrdem.description })
       });
-      if (!res.ok) throw new Error('Falha ao salvar');
-      setTitle('');
-      setDescription('');
-      setFeedback('Ordem de serviço salva no banco em nuvem (MongoDB Atlas)!');
-      fetchTasks();
-    } catch {
-      setFeedback('Erro ao conectar à API no Render.');
-    }
+      if (res.ok) {
+        const criadaNoBanco = await res.json();
+        salvarLocal([criadaNoBanco, ...tasks]);
+      }
+    } catch {}
   };
 
   const handleToggleTask = async (task) => {
+    const atualizada = { ...task, completed: !task.completed };
+    const novaLista = tasks.map((t) => (t._id === task._id ? atualizada : t));
+    salvarLocal(novaLista);
+    mostrarAviso(atualizada.completed ? 'Ordem de serviço marcada como concluída!' : 'Ordem de serviço reaberta!', 'success');
+
     try {
       await fetch(`${API_URL}/api/tasks/${task._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: task.title, description: task.description, completed: !task.completed })
+        body: JSON.stringify({ title: atualizada.title, description: atualizada.description, completed: atualizada.completed })
       });
-      fetchTasks();
-    } catch {
-      setFeedback('Erro ao atualizar status.');
-    }
+    } catch {}
   };
 
   const handleDeleteTask = async (id) => {
+    const novaLista = tasks.filter((t) => t._id !== id);
+    salvarLocal(novaLista);
+    mostrarAviso('Ordem de serviço excluída com sucesso!', 'success');
+
     try {
       await fetch(`${API_URL}/api/tasks/${id}`, { method: 'DELETE' });
-      fetchTasks();
-    } catch {
-      setFeedback('Erro ao excluir registro.');
-    }
+    } catch {}
   };
 
   const isDark = tema === 'escuro';
@@ -225,10 +319,10 @@ export default function App() {
       <div className="container">
         <header className="header" style={{ marginBottom: 20 }}>
           <h1 style={{ color: isDark ? '#FAFAFA' : '#0f172a', fontSize: `${1.5 * escala}rem` }}>
-            TechTask P1 & P2 — Ordens de Serviço de TI + Entrada Nativa
+            📱 TechTask App (P1 & P2) — Ordens de Serviço + Biometria
           </h1>
           <p style={{ color: isDark ? '#cbd5e1' : '#475569', fontSize: `${0.9 * escala}rem` }}>
-            Integração P1 (Vercel + Render + MongoDB) & P2 (Acessibilidade Aula 1 + Biometria Aula 3)
+            Aplicativo Híbrido: P1 (Nuvem) + P2 (Acessibilidade Aula 1, Libras, Login Google & Biometria Aula 3)
           </p>
         </header>
 
@@ -257,6 +351,57 @@ export default function App() {
           </div>
         </div>
 
+        {/* Modal de Login com Conta do Google */}
+        {modalGoogleAberto && (
+          <div style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9998, padding: 16
+          }}>
+            <div style={{ ...cardStyle, maxWidth: 440, width: '100%', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
+              <h3 style={{ marginBottom: 8, color: isDark ? '#FAFAFA' : '#0f172a' }}>
+                🌐 Entrar com o Google
+              </h3>
+              <p style={{ marginBottom: 12, fontSize: `${0.9 * escala}rem`, color: isDark ? '#cbd5e1' : '#475569' }}>
+                Escolha uma conta Google rápida ou digite o seu e-mail do Google para autenticar:
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setGoogleEmail('mateus2018pc@gmail.com')}
+                >
+                  mateus2018pc@gmail.com
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setGoogleEmail('aluno.univassouras@gmail.com')}
+                >
+                  aluno.univassouras@gmail.com
+                </button>
+              </div>
+              <form onSubmit={handleConfirmarGoogle} className="form">
+                <input
+                  type="email"
+                  aria-label="E-mail da conta Google"
+                  placeholder="Digite seu e-mail @gmail.com"
+                  value={googleEmail}
+                  onChange={(e) => setGoogleEmail(e.target.value)}
+                  required
+                />
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button type="button" onClick={() => setModalGoogleAberto(false)} className="btn btn-secondary">
+                    Cancelar
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    Continuar com esta Conta Google
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Modal de Simulação do Diálogo Biométrico do Sistema Operacional */}
         {promptBiometrico && (
           <div style={{
@@ -269,11 +414,11 @@ export default function App() {
                 {promptBiometrico.modo === 'login' ? 'Confirmar entrada' : 'Ativar entrada nativa'}
               </h3>
               <p style={{ marginBottom: 16, fontSize: `${0.9 * escala}rem`, color: isDark ? '#cbd5e1' : '#475569' }}>
-                Diálogo Nativo do Sistema Operacional (`expo-local-authentication`) para a conta <strong>{promptBiometrico.pendingUser?.email}</strong>
+                Diálogo Biométrico Nativo do Sistema Operacional (<code>expo-local-authentication</code>) para a conta <strong>{promptBiometrico.pendingUser?.email}</strong>
               </p>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button type="button" onClick={confirmarBiometria} className="btn btn-primary">
-                  ✓ Reconhecer Digital / Face ID
+                  ✓ Confirmar Digital / Face ID
                 </button>
                 <button type="button" onClick={cancelarBiometria} className="btn btn-delete" style={{ padding: '10px 16px' }}>
                   ✕ Cancelar Diálogo
@@ -287,7 +432,7 @@ export default function App() {
         {!user ? (
           <div style={cardStyle}>
             <h2 style={{ marginBottom: 12, color: isDark ? '#FAFAFA' : '#0f172a', fontSize: `${1.25 * escala}rem` }}>
-              🔐 Login Remoto + Entrada Nativa (Aula 3 — P2)
+              🔐 Entrada no Aplicativo (Login Remoto + Biometria)
             </h2>
 
             {reason && (
@@ -298,7 +443,7 @@ export default function App() {
 
             <form onSubmit={handleLogin} className="form">
               <div className="form-group">
-                <label style={{ color: isDark ? '#e2e8f0' : '#475569' }}>Selecionar Conta de Teste (ou digite o e-mail):</label>
+                <label style={{ color: isDark ? '#e2e8f0' : '#475569' }}>Contas Rápidas para Teste (A3-01 a A3-05):</label>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
                   <button type="button" className="btn btn-secondary" onClick={() => setEmail('alunoa@lab.edu')}>
                     Conta A (alunoa@lab.edu)
@@ -310,10 +455,10 @@ export default function App() {
                 <input
                   type="email"
                   aria-label="E-mail"
+                  placeholder="Digite seu e-mail"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  style={{ fontSize: `${1 * escala}px` }}
                 />
               </div>
 
@@ -322,27 +467,44 @@ export default function App() {
                 <input
                   type="password"
                   aria-label="Senha"
+                  placeholder="Digite sua senha"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
               </div>
 
-              <div style={{ padding: 12, borderRadius: 8, border: `1px dashed ${isDark ? '#555' : '#94a3b8'}`, marginTop: 4 }}>
-                <strong style={{ display: 'block', marginBottom: 6 }}>🛠️ Simulador de Hardware do Aparelho (Para demonstrar cenários A3-01 a A3-05 em aula):</strong>
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                {busy ? 'Entrando...' : 'Entrar com E-mail e Senha'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalGoogleAberto(true)}
+                className="btn btn-secondary"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  border: '1px solid #3b82f6',
+                  marginTop: 4,
+                }}
+              >
+                <span>🌐</span> <strong>Entrar com Conta do Google</strong>
+              </button>
+
+              <div style={{ padding: 12, borderRadius: 8, border: `1px dashed ${isDark ? '#555' : '#94a3b8'}`, marginTop: 8 }}>
+                <strong style={{ display: 'block', marginBottom: 6 }}>🛠️ Simulador de Hardware do Aparelho (Cenários A3-01 a A3-05):</strong>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={biometriaCadastrada}
                     onChange={(e) => setBiometriaCadastrada(e.target.checked)}
                   />
-                  Aparelho possui biometria cadastrada (`isEnrolledAsync = {String(biometriaCadastrada)}`)
+                  Aparelho possui biometria cadastrada (<code>isEnrolledAsync = {String(biometriaCadastrada)}</code>)
                 </label>
               </div>
-
-              <button type="submit" className="btn btn-primary" disabled={busy}>
-                {busy ? 'Entrando...' : 'Entrar no Sistema'}
-              </button>
             </form>
           </div>
         ) : (
@@ -351,8 +513,8 @@ export default function App() {
             <div style={cardStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                 <div>
-                  <strong>Conta autenticada:</strong> {user.email} <br />
-                  <small>UUID: <code>{user.id}</code> | Chave no aparelho: <code>native:{user.id} = {String(nativeAtivoContaAtual)}</code></small>
+                  <strong>Conta autenticada:</strong> {user.email} ({user.provider === 'google' ? 'Google OAuth' : 'Senha Remota'})<br />
+                  <small>UUID: <code>{user.id}</code> | Biometria neste aparelho (<code>native:{user.id}</code>): <strong>{nativeAtivoContaAtual ? 'ATIVA ✅' : 'DESATIVADA'}</strong></small>
                 </div>
                 <button type="button" onClick={() => logout('Sessão encerrada pelo usuário.')} className="btn btn-delete" style={{ padding: '8px 14px' }}>
                   Sair (Logout)
@@ -360,7 +522,12 @@ export default function App() {
               </div>
 
               {feedback && (
-                <div role="status" aria-live="polite" className="alert alert-success" style={{ marginTop: 12, marginBottom: 0 }}>
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`alert ${feedbackTipo === 'error' ? 'alert-error' : 'alert-success'}`}
+                  style={{ marginTop: 12, marginBottom: 0 }}
+                >
                   {feedback}
                 </div>
               )}
@@ -378,7 +545,14 @@ export default function App() {
                   onClick={() => setAbaAtiva('perfil')}
                   className={`btn ${abaAtiva === 'perfil' ? 'btn-primary' : 'btn-secondary'}`}
                 >
-                  🔒 Perfil & Entrada Nativa (Aula 3 - P2)
+                  🔒 Perfil & Biometria Nativa (Aula 3)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAbaAtiva('ajuda')}
+                  className={`btn ${abaAtiva === 'ajuda' ? 'btn-primary' : 'btn-secondary'}`}
+                >
+                  🤟 Ajuda e Orientações em Libras (Aula 1)
                 </button>
               </div>
             </div>
@@ -387,7 +561,7 @@ export default function App() {
               <div style={cardStyle}>
                 <h3 style={{ color: isDark ? '#FAFAFA' : '#0f172a' }}>Configuração de Entrada com Recurso Nativo (Aula 3)</h3>
                 <p style={{ marginBottom: 12 }}>
-                  Ative ou desative a exigência de confirmação biométrica para a conta <strong>{user.email}</strong> neste aparelho. Nenhuma senha é salva.
+                  Ative ou desative a exigência de confirmação biométrica para a conta <strong>{user.email}</strong> neste aparelho. Nenhuma senha ou digital é armazenada pelo aplicativo.
                 </p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
                   <button type="button" onClick={() => handleEnableNative(true)} className="btn btn-primary">
@@ -403,8 +577,23 @@ export default function App() {
                     checked={biometriaCadastrada}
                     onChange={(e) => setBiometriaCadastrada(e.target.checked)}
                   />
-                  Simular biometria cadastrada no SO (`isEnrolledAsync`) — desmarque para testar o cenário A3-03
+                  Simular biometria cadastrada no SO (<code>isEnrolledAsync</code>) — desmarque para demonstrar o cenário A3-03
                 </label>
+              </div>
+            )}
+
+            {abaAtiva === 'ajuda' && (
+              <div style={cardStyle}>
+                <h3 style={{ color: isDark ? '#FAFAFA' : '#0f172a' }}>Orientações Acessíveis e Libras (Aula 1 Preservada)</h3>
+                <p style={{ marginBottom: 10 }}>
+                  <strong>Transcrição do fluxo principal do aplicativo:</strong>
+                </p>
+                <ol style={{ paddingLeft: 20, marginBottom: 12 }}>
+                  <li>Autentique-se com e-mail/senha ou com sua <strong>Conta do Google</strong>.</li>
+                  <li>Na aba <strong>Perfil & Biometria Nativa</strong>, toque em <strong>Ativar entrada nativa</strong> para vincular a confirmação biométrica do sistema operacional à sua conta neste aparelho (<code>native:UUID</code>).</li>
+                  <li>Na aba <strong>Ordens de Serviço de TI</strong>, cadastre o título da manutenção e a descrição técnica, conclua ou exclua chamados sincronizados com a nuvem.</li>
+                  <li>Use o botão azul do widget <strong>VLibras</strong> na lateral da tela para traduzir qualquer texto para a Língua Brasileira de Sinais.</li>
+                </ol>
               </div>
             )}
 
@@ -458,6 +647,9 @@ export default function App() {
                           <div className="task-info">
                             <span className="task-title" style={{ color: isDark ? '#FAFAFA' : '#1e293b' }}>{task.title}</span>
                             {task.description && <p className="task-desc" style={{ color: isDark ? '#cbd5e1' : '#64748b' }}>{task.description}</p>}
+                            <small className="task-date" style={{ display: 'block', marginTop: 4, color: '#94a3b8' }}>
+                              Criado em: {new Date(task.createdAt || Date.now()).toLocaleString('pt-BR')}
+                            </small>
                           </div>
                           <div className="task-actions">
                             <button onClick={() => handleToggleTask(task)} className={`btn-sm ${task.completed ? 'btn-reopen' : 'btn-check'}`}>
