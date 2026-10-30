@@ -23,7 +23,7 @@ if (!mongoURI) {
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
-    message: "API P1 funcionando perfeitamente!",
+    message: "API P1/P2 funcionando perfeitamente!",
     database: mongoose.connection.readyState === 1 ? "Conectado" : "Desconectado",
     timestamp: new Date().toISOString()
   });

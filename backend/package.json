@@ -1,7 +1,7 @@
 {
   "name": "backend-p1",
   "version": "1.0.0",
-  "description": "Backend para atividade P1 - Faculdade",
+  "description": "Backend para atividade P1 e P2 - Faculdade",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
