@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "TechTask",
+    "slug": "techtask-p2",
+    "version": "2.0.0",
+    "scheme": "techtask",
+    "orientation": "default",
+    "android": { "package": "br.edu.techtask.app" },
+    "ios": { "bundleIdentifier": "br.edu.techtask.app" },
+    "plugins": [
+      ["expo-local-authentication", { "faceIDPermission": "Use o Face ID para confirmar a entrada no TechTask." }],
+      "expo-notifications",
+      "expo-audio",
+      "expo-video",
+      "expo-secure-store"
+    ]
+  }
+}

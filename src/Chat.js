@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { AppState, Button, ScrollView, Text, TextInput, View } from 'react-native';
+import { AppState, Button, ScrollView, TextInput, View } from 'react-native';
+import { AText, useA11y } from './a11y/Acessibilidade';
 import { supabase } from './supabase';
 import { useSession } from './SessionProvider';
 
 export default function Chat({ roomId, onSent }) {
   const { user, touch } = useSession();
+  const { cores, p } = useA11y();
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
   const [status, setStatus] = useState('Conectando');
@@ -50,20 +52,19 @@ export default function Chat({ roomId, onSent }) {
       if (error) throw error;
       setBody('');
       onSent?.();
-      const { error: pushError } = await supabase.functions.invoke('notificar', {
-        body: { messageId: data.id },
-      });
-      setStatus(pushError ? 'Mensagem salva; push não enviado' : 'Mensagem salva; envio solicitado');
+      setMessages(previous => previous.some(row => row.id === data.id) ? previous : [...previous, data]);
+      setStatus('Mensagem enviada e salva na nuvem.');
     } catch (error) { setStatus(error.message); }
     finally { setSending(false); }
   }
   return <View style={{ flex: 1 }}>
-    <Text accessibilityLiveRegion="polite">{status}</Text>
+    <AText accessibilityLiveRegion="polite">{status}</AText>
     <ScrollView onScrollBeginDrag={touch}>
-      {messages.map(item => <Text key={item.id}>{item.author_id === user.id ? 'Você' : 'Participante'}: {item.body}</Text>)}
+      {messages.map(item => <AText key={item.id}>{item.author_id === user.id ? 'Você' : 'Participante'}: {item.body}</AText>)}
     </ScrollView>
     <TextInput accessibilityLabel="Mensagem" value={body} onChangeText={value => { touch(); setBody(value); }}
-      maxLength={1000} style={{ borderWidth: 1, padding: 12 }} />
+      maxLength={1000} style={{ borderWidth: 1, borderColor: cores.borda,
+        color: cores.texto, fontSize: 16 * p.escala, padding: 12 }} />
     <Button title="Enviar" onPress={send} disabled={sending} />
   </View>;
 }

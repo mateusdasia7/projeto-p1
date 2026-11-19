@@ -2,19 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { Button, ScrollView, TextInput, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { SessionProvider, useSession } from './src/SessionProvider';
-import { supabase } from './src/supabase';
-import { registerPush } from './src/notifications';
+import { configurationError, supabase } from './src/supabase';
 import Chat from './src/Chat';
 import { AcessibilidadeProvider, AText, Ajustes, useA11y } from './src/a11y/Acessibilidade';
 import Libras from './src/a11y/Libras';
 import DominioP1 from './src/DominioP1';
 
 function Login() {
-  const { login, loginWithGoogle, busy, reason } = useSession();
+  const { login, busy, reason } = useSession();
   const { cores, p } = useA11y();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [googleEmail, setGoogleEmail] = useState('mateus2018pc@gmail.com');
   const [mostrarAcessibilidade, setMostrarAcessibilidade] = useState(false);
 
   return (
@@ -63,34 +61,8 @@ function Login() {
       <Button
         title={busy ? 'Entrando...' : 'Entrar com E-mail e Senha'}
         disabled={busy}
-        onPress={() => login(email, password)}
+        onPress={async () => { await login(email, password); setPassword(''); }}
       />
-
-      <View style={{ padding: 14, borderWidth: 1, borderColor: cores.borda, borderRadius: 8, gap: 10 }}>
-        <AText style={{ fontWeight: 'bold' }}>Entrar com Conta do Google (OAuth + Biometria):</AText>
-        <TextInput
-          accessibilityLabel="Conta Google"
-          placeholder="Seu e-mail do Google (ex: usuario@gmail.com)"
-          placeholderTextColor={cores.borda}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={googleEmail}
-          onChangeText={setGoogleEmail}
-          style={{
-            borderWidth: 1,
-            borderColor: cores.borda,
-            borderRadius: 6,
-            padding: 10,
-            color: cores.texto,
-            fontSize: 16 * p.escala,
-          }}
-        />
-        <Button
-          title="Continuar com o Google"
-          disabled={busy}
-          onPress={() => loginWithGoogle(googleEmail)}
-        />
-      </View>
 
       <Button
         title={mostrarAcessibilidade ? 'Ocultar Acessibilidade e Libras' : 'Acessibilidade e Ajuda em Libras'}
@@ -147,9 +119,10 @@ function PrivateArea() {
   }
 
   async function save() {
-    const { error } = await supabase.from('profiles').update({ name: name.trim() }).eq('id', user.id);
-    if (error) throw error;
-    setProfile(previous => ({ ...previous, name: name.trim() }));
+    const { data, error } = await supabase.from('profiles').update({ name: name.trim() })
+      .eq('id', user.id).select('id,name,role').single();
+    if (error || !data) throw new Error('Nenhum perfil atualizado. Verifique a sessão.');
+    setProfile(data);
   }
 
   function sound() {
@@ -177,7 +150,7 @@ function PrivateArea() {
       <AText accessibilityRole="header" style={{ fontWeight: 'bold' }}>
         Conta: {user.email}
       </AText>
-      <AText>Perfil: {profile?.name || user.email} | Papel: {profile?.role || 'aluno'}</AText>
+      <AText>Perfil: {profile?.name || user.email} | Papel: {profile?.role || 'Carregando…'}</AText>
       <TextInput
         accessibilityLabel="Nome do perfil"
         value={name}
@@ -195,13 +168,6 @@ function PrivateArea() {
       <Button title="Ativar entrada nativa" onPress={() => execute(() => enableNative(true))} />
       <Button title="Desativar entrada nativa" onPress={() => execute(() => enableNative(false))} />
       <Button title={muted ? 'Ativar som' : 'Silenciar som'} onPress={() => setMuted(!muted)} />
-      <Button
-        title="Registrar push"
-        onPress={() => execute(async () => {
-          const granted = await registerPush(user.id);
-          if (!granted) throw new Error('Permissão negada; aplicativo continua disponível');
-        })}
-      />
       {rooms.map(room => (
         <Button key={room.id} title={'Abrir ' + room.name} onPress={() => setRoomId(room.id)} />
       ))}
@@ -221,6 +187,9 @@ function PrivateArea() {
 function Gate() {
   const { user } = useSession();
   const { cores } = useA11y();
+  if (configurationError) return <View style={{ flex: 1, padding: 24, backgroundColor: cores.fundo }}>
+    <AText>Configuração pendente. Configure a conexão com o Supabase antes de liberar o aplicativo.</AText>
+  </View>;
   return (
     <View style={{ flex: 1, paddingTop: 48, backgroundColor: cores.fundo }}>
       {user ? <PrivateArea key={user.id} /> : <Login />}

@@ -1,177 +1,95 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, View } from 'react-native';
 import { supabase } from './supabase';
 import * as LocalAuthentication from 'expo-local-authentication';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { createSessionManager } from '../shared/session.mjs';
 
 const Context = createContext(null);
 export const useSession = () => useContext(Context);
 
 export function SessionProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const lease = useRef(null);
-  const activity = useRef(0);
-  const active = useRef(false);
-  const generation = useRef(0);
+  const [state, setState] = useState({ user: null, reason: '', busy: false });
   const nativePrompt = useRef(false);
   const backgroundDuringPrompt = useRef(false);
-  const renewing = useRef(false);
-  const signingOut = useRef(false);
-  const touch = () => { if (active.current) activity.current = Date.now(); };
+  const connected = useRef(true);
+  const manager = useMemo(() => createSessionManager(supabase, {
+    onChange: setState, isOnline: () => connected.current, isForeground: () => AppState.currentState === 'active'
+      || (nativePrompt.current && AppState.currentState === 'inactive'),
+  }), []);
 
-  async function logout(message = 'Sessão encerrada') {
-    if (signingOut.current) return;
-    signingOut.current = true;
-    generation.current += 1;
-    active.current = false;
-    setUser(null); // Desmonta telas privadas e assinaturas antes da rede.
-    setReason(message);
-    const previous = lease.current;
-    lease.current = null;
+  async function confirmNative(user) {
+    const enabled = await AsyncStorage.getItem('native:' + user.id);
+    if (enabled !== 'true') return;
+    if (!(await LocalAuthentication.hasHardwareAsync()) || !(await LocalAuthentication.isEnrolledAsync())) {
+      throw new Error('Recurso nativo indisponível. Solicite a recuperação orientada da conta.');
+    }
+    nativePrompt.current = true;
+    backgroundDuringPrompt.current = false;
+    let result;
     try {
-      if (previous) await supabase.rpc('end_session', { p_id: previous });
-    } catch {
-      // Offline: a concessão já emitida expira pelo prazo do servidor.
-    } finally {
-      try { await supabase.auth.signOut({ scope: 'local' }); }
-      finally { signingOut.current = false; }
-    }
-  }
-
-  async function verificarBiometriaEIniciarSessao(authenticatedUser, attempt) {
-    const enabled = await AsyncStorage.getItem('native:' + authenticatedUser.id);
-    if (enabled === 'true') {
-      if (!(await LocalAuthentication.hasHardwareAsync()) ||
-          !(await LocalAuthentication.isEnrolledAsync())) {
-        throw new Error('Recurso nativo indisponível. Use a recuperação orientada pelo professor.');
-      }
-      nativePrompt.current = true;
-      backgroundDuringPrompt.current = false;
-      let result;
-      try {
-        result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Confirmar entrada',
-          cancelLabel: 'Cancelar',
-          disableDeviceFallback: false,
-          biometricsSecurityLevel: 'strong',
-        });
-      } finally {
-        nativePrompt.current = false;
-      }
-      if (!result.success || backgroundDuringPrompt.current) {
-        throw new Error('Entrada nativa não autorizada');
-      }
-    }
-    if (attempt !== generation.current || AppState.currentState !== 'active') {
-      throw new Error('Aplicativo saiu do primeiro plano durante a entrada');
-    }
-    const { data: id, error: leaseError } = await supabase.rpc('begin_session');
-    if (leaseError) throw leaseError;
-    lease.current = id;
-    if (attempt !== generation.current || AppState.currentState !== 'active') {
-      await logout('Entrada interrompida');
-      return;
-    }
-    activity.current = Date.now();
-    active.current = true;
-    setUser(authenticatedUser);
-  }
-
-  async function login(email, password) {
-    if (busy || signingOut.current) return;
-    setBusy(true);
-    setReason('');
-    const attempt = ++generation.current;
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      await verificarBiometriaEIniciarSessao(data.user, attempt);
-    } catch (error) {
-      await logout(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function loginWithGoogle(googleEmail = 'mateus2018pc@gmail.com') {
-    if (busy || signingOut.current) return;
-    setBusy(true);
-    setReason('');
-    const attempt = ++generation.current;
-    try {
-      // Tenta OAuth via Supabase; se em ambiente de laboratório local, valida sessão Google + Biometria
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { queryParams: { login_hint: googleEmail } },
+      result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Confirmar entrada', cancelLabel: 'Cancelar',
+        disableDeviceFallback: false, biometricsSecurityLevel: 'strong',
       });
-      if (error) throw error;
-      const googleUser = data?.user || {
-        id: 'google-' + googleEmail.replace(/[^a-z0-9]/gi, '').toLowerCase(),
-        email: googleEmail,
-        app_metadata: { provider: 'google' },
-      };
-      await verificarBiometriaEIniciarSessao(googleUser, attempt);
-    } catch (error) {
-      await logout(error.message || 'Falha ao autenticar com Google');
-    } finally {
-      setBusy(false);
-    }
+    } finally { nativePrompt.current = false; }
+    if (!result.success || backgroundDuringPrompt.current) throw new Error('Entrada nativa não autorizada.');
   }
+
+  const login = (email, password) => manager.signIn(async () => {
+    if (!supabase) throw new Error('Configure a conexão com o Supabase.');
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw new Error('E-mail ou senha inválidos, ou serviço indisponível.');
+    return data.user;
+  }, confirmNative);
 
   async function enableNative(enabled) {
-    if (!user) return;
+    const current = manager.getState().user;
+    if (!current) throw new Error('Entre novamente.');
     if (enabled) {
       if (!(await LocalAuthentication.hasHardwareAsync()) || !(await LocalAuthentication.isEnrolledAsync())) {
-        throw new Error('Cadastre biometria nas configurações do aparelho');
+        throw new Error('Cadastre biometria nas configurações do aparelho.');
       }
       nativePrompt.current = true;
       backgroundDuringPrompt.current = false;
       let result;
-      try {
-        result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Ativar entrada nativa' });
-      } finally { nativePrompt.current = false; }
-      if (!result.success || backgroundDuringPrompt.current || !active.current) throw new Error('Ativação cancelada');
+      try { result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Ativar entrada nativa' }); }
+      finally { nativePrompt.current = false; }
+      if (!result.success || backgroundDuringPrompt.current || manager.getState().user?.id !== current.id) {
+        throw new Error('Ativação cancelada.');
+      }
     }
-    await AsyncStorage.setItem('native:' + user.id, String(enabled));
-    touch();
+    await AsyncStorage.setItem('native:' + current.id, String(enabled));
+    manager.touch();
   }
 
   useEffect(() => {
-    const listener = AppState.addEventListener('change', state => {
+    const network = NetInfo.addEventListener(value => { connected.current = value.isConnected !== false && value.isInternetReachable !== false; });
+    const listener = AppState.addEventListener('change', value => {
       if (nativePrompt.current) {
-        // iOS pode ficar inactive no diálogo; background real continua encerrando.
-        if (state === 'background') {
+        if (value === 'background') {
           backgroundDuringPrompt.current = true;
-          void logout('Aplicativo em segundo plano');
+          void manager.logout('Aplicativo em segundo plano.');
         }
-        return;
+        return; // O estado inactive do diálogo iOS não equivale a background.
       }
-      if (state !== 'active') void logout('Aplicativo saiu do primeiro plano');
+      if (value !== 'active') void manager.logout('Aplicativo saiu do primeiro plano.');
     });
-    const timer = setInterval(async () => {
-      if (!active.current || renewing.current) return;
-      if (Date.now() - activity.current >= 120000) {
-        void logout('Sessão expirada por inatividade'); return;
+    const timer = setInterval(() => void manager.tick(), 10000);
+    const auth = supabase?.auth.onAuthStateChange(event => {
+      if (event === 'SIGNED_OUT' && manager.getState().user) {
+        Promise.resolve().then(() => void manager.logout('Autenticação encerrada.'));
       }
-      renewing.current = true;
-      try {
-        const { data, error } = await supabase.rpc('touch_session', {
-          p_id: lease.current,
-          p_activity: new Date(activity.current).toISOString(),
-        });
-        if (error || data !== true) await logout('Sessão inválida no servidor');
-      } catch {
-        await logout('Não foi possível validar a sessão');
-      } finally { renewing.current = false; }
-    }, 10000);
-    return () => { listener.remove(); clearInterval(timer); };
-  }, []);
+    });
+    return () => {
+      listener.remove(); network(); clearInterval(timer);
+      auth?.data.subscription.unsubscribe();
+    };
+  }, [manager]);
 
-  return (
-    <Context.Provider value={{ user, reason, busy, login, loginWithGoogle, logout, touch, enableNative }}>
-      <View style={{ flex: 1 }} onTouchStart={touch}>{children}</View>
-    </Context.Provider>
-  );
+  return <Context.Provider value={{ ...state, login, logout: manager.logout,
+    touch: manager.touch, accessToken: manager.accessToken, enableNative }}>
+    <View style={{ flex: 1 }} onTouchStart={manager.touch}>{children}</View>
+  </Context.Provider>;
 }

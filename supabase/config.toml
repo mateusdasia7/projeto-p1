@@ -1,0 +1,6 @@
+project_id = "techtask"
+
+[functions.notificar]
+# A função valida o JWT em auth.getUser e aplica RLS antes de qualquer acesso admin.
+# Assim também funciona com as novas chaves de assinatura do Supabase.
+verify_jwt = false

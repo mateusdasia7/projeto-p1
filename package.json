@@ -1,0 +1,43 @@
+{
+  "name": "techtask-p2",
+  "version": "2.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "android:go": "node scripts/preparar-android.mjs && expo start --go --lan",
+    "test": "node --test tests/*.test.mjs",
+    "test:lab": "node --env-file-if-exists=.env.lab scripts/lab-p2.mjs"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "^12.0.1",
+    "@supabase/supabase-js": "2.119.1",
+    "expo": "~58.0.26",
+    "expo-audio": "~58.0.12",
+    "expo-constants": "~58.0.16",
+    "expo-crypto": "~58.0.4",
+    "expo-dev-client": "~58.0.21",
+    "expo-linking": "~58.0.17",
+    "expo-local-authentication": "~58.0.3",
+    "expo-notifications": "~58.1.9",
+    "expo-secure-store": "~58.0.3",
+    "expo-video": "~58.0.14",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-url-polyfill": "^4.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "fake-indexeddb": "^6.2.5"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "overrides": {
+    "@expo/fingerprint": {
+      "minimatch": "^11.0.9"
+    }
+  }
+}
